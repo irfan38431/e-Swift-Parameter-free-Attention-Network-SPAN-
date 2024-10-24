@@ -47,8 +47,12 @@ SPAN-Updated	     27.01	             20.15	        0.151	            10.23      
 ### Limitations:
 >> Limited use of attention mechanisms and lacks advanced features that could further improve accuracy.
 >> PSNR is lower compared to the more optimized versions, and validation runtime is higher (30.62 ms) due to less efficient processing.
+>> 
 ## 2. Original SPAN Model (38_SPAN)
 ### Architecture Overview:
+
+![image](https://github.com/user-attachments/assets/5e8ee022-acc9-468b-8efe-ce7d0880e0df)
+
 1 -> Parameter-Free Design: The SPAN (Swift Parameter-free Attention Network) architecture introduces a parameter-efficient design that maintains performance while reducing model complexity.
 2 -> Conv3XC2 Module: This module is used extensively in SPAN for efficient feature extraction. It combines grouped convolutions and channel expansion to enhance feature richness with fewer parameters.
 3 -> SPAB (Structure-Preserving Attention Block): This block replaces the standard RLFB from the baseline model. SPAB integrates a combination of convolutional layers and a novel attention mechanism to preserve structural integrity while performing super-resolution.
