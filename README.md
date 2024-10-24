@@ -31,6 +31,8 @@ SPAN-Updated	     27.01	             20.15	        0.151	            10.23      
 ## 1. RLFN Baseline Model
 ### Architecture Overview:
 
+![image](https://github.com/user-attachments/assets/598cf74c-afb2-4cc7-b2d1-2c2d4dd078dd)
+
 1 -> Convolutional Layers: The baseline RLFN model uses multiple standard convolutional layers. It is structured with an initial convolution layer, followed by four residual local feature blocks (RLFBs) and ends with an upsampling layer using pixel shuffle.
 
 2 -> Residual Local Feature Block (RLFB): Each RLFB consists of a series of convolutional layers that learn local features, followed by an Enhanced Spatial Attention (ESA) block. The ESA focuses on important spatial features within the image to enhance the super-resolution process.
