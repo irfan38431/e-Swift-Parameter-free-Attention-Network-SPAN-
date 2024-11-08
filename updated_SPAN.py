@@ -4,23 +4,6 @@ from torch import nn as nn
 import torch.nn.functional as F
 
 
-class ChannelAttention(nn.Module):
-    def __init__(self, in_planes, reduction=16):
-        super(ChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-
-        self.fc1 = nn.Conv2d(in_planes, in_planes // reduction, 1, bias=False)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Conv2d(in_planes // reduction, in_planes, 1, bias=False)
-
-    def forward(self, x):
-        avg_out = self.fc2(self.relu1(self.fc1(self.avg_pool(x))))
-        max_out = self.fc2(self.relu1(self.fc1(self.max_pool(x))))
-        out = avg_out + max_out
-        return F.sigmoid(out) * x
-
-
 class Conv3XC2(nn.Module):
     def __init__(
         self, c_in, c_out, gain1=1, gain2=0, s=1, groups=1, bias=True, relu=False
@@ -86,9 +69,7 @@ class Conv3XC2(nn.Module):
         self.update_params()
 
     def update_params(self):
-        # 分组卷积的权重更新
         with torch.no_grad():
-            # 获取每个卷积层的权重和偏置
             w1 = self.conv[0].weight.data.clone()
             b1 = (
                 self.conv[0].bias.data.clone()
@@ -107,13 +88,9 @@ class Conv3XC2(nn.Module):
                 if self.conv[2].bias is not None
                 else None
             )
-
-            # 对于分组卷积，我们需要对每个组的权重分别进行卷积操作
-            # 这里我们假设输入通道和输出通道的数量是组数的整数倍
             group_in_channels = w1.size(1) // self.groups
             group_out_channels = w3.size(0) // self.groups
 
-            # 初始化合并后的权重和偏置
             weight_concat = torch.zeros_like(self.eval_conv.weight.data)
             bias_concat = (
                 torch.zeros_like(self.eval_conv.bias.data)
@@ -121,10 +98,7 @@ class Conv3XC2(nn.Module):
                 else None
             )
 
-            # 对每个组进行操作
-            # import pdb; pdb.set_trace()
             for g in range(self.groups):
-                # 提取每个组的权重
                 w1_g = w1[
                     g
                     * group_out_channels
@@ -145,13 +119,10 @@ class Conv3XC2(nn.Module):
                     :,
                     :,
                 ]
-                # g * group_in_channels * self.gain:(g + 1) * self.gain * group_in_channels
                 w3_g = w3[
                     g * group_out_channels : (g + 1) * group_out_channels, :, :, :
                 ]
 
-                # 计算合并后的权重
-                # import pdb; pdb.set_trace()
                 w_g = (
                     F.conv2d(
                         w1_g.flip(2, 3).permute(1, 0, 2, 3), w2_g, padding=2, stride=1
@@ -168,12 +139,10 @@ class Conv3XC2(nn.Module):
                     .permute(1, 0, 2, 3)
                 )
 
-                # 将每个组的权重放回合并后的权重张量中
                 weight_concat[
                     g * group_out_channels : (g + 1) * group_out_channels, :, :, :
                 ] = weight_concat_g
 
-                # 如果有偏置，也需要进行合并
                 if b1 is not None and b2 is not None and b3 is not None:
                     b_g = (
                         w2_g
@@ -198,7 +167,6 @@ class Conv3XC2(nn.Module):
                         g * group_out_channels : (g + 1) * group_out_channels
                     ] = bias_concat_g
 
-            # 将shortcut层的权重和偏置加到合并后的权重和偏置上
             sk_w = self.sk.weight.data.clone()
             sk_b = self.sk.bias.data.clone() if self.sk.bias is not None else None
             if sk_w is not None:
@@ -214,15 +182,9 @@ class Conv3XC2(nn.Module):
                     ],
                 )
 
-                # Add the shortcut weights to the concatenated weights
-                # We need to ensure that the shortcut weights are added to the correct group
-                # import pdb; pdb.set_trace()
+            
                 weight_concat += sk_w_padded
-                # for g in range(self.groups):
-                #     weight_concat[g * group_in_channels * self.gain:(g + 1) * group_in_channels * self.gain, :, :, :] += \
-                #         sk_w_padded[g * group_in_channels * self.gain:(g + 1) * group_in_channels * self.gain, :, :, :]
 
-            # If there is a bias in the shortcut, add it to the concatenated bias
             if sk_b is not None:
                 bias_concat += sk_b
 
@@ -425,13 +387,6 @@ class Conv3XC(nn.Module):
         self.has_relu = relu
         gain = gain1
 
-        # self.sk = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=1, padding=0, stride=s, bias=bias)
-        # self.conv = nn.Sequential(
-        #    nn.Conv2d(in_channels=c_in, out_channels=c_in * gain, kernel_size=1, padding=0, bias=bias),
-        #    nn.Conv2d(in_channels=c_in * gain, out_channels=c_out * gain, kernel_size=3, stride=s, padding=0, bias=bias),
-        #    nn.Conv2d(in_channels=c_out * gain, out_channels=c_out, kernel_size=1, padding=0, bias=bias),
-        # )
-
         self.eval_conv = nn.Conv2d(
             in_channels=c_in,
             out_channels=c_out,
@@ -496,12 +451,8 @@ class CustomActivation(nn.Module):
         self.alpha = nn.Parameter(
             torch.ones((1, num_channels, 1, 1)), requires_grad=True
         )
-        # self.act1 = torch.nn.SiLU(inplace=True)
 
     def forward(self, x):
-        # return x * torch.sigmoid(x)
-        # return self.act1(x)
-        # return x
         return x * torch.sigmoid(self.alpha * x)
 
 
@@ -519,8 +470,6 @@ class SlimBlock(nn.Module):
             groups=2,
             bias=True,
         )
-        # self.conv1 = Conv3XC(dw_channel, dw_channel, gain1=2, s=1)
-        # self.act = activation('lrelu', neg_slope=0.1, inplace=True)
         self.act = CustomActivation(c)
 
     def forward(self, inp):
@@ -528,31 +477,11 @@ class SlimBlock(nn.Module):
         # x1_init, x2_init = torch.chunk(inp, chunks=2, dim=1)
         x = self.conv1(inp)
         x = self.act(x)
-        # x1, x2 = torch.chunk(x, chunks=2, dim=1)
-        # y1 = x1_init + x1
-        # y2 = x2_init + x2
-        #  y = torch.cat([y1, y2], dim=1)
+
         y = x + inp
         return y
 
 
-# class SlimBlock(nn.Module):
-#    def __init__(self, c, DW_Expand=1, FFN_Expand=1, drop_out_rate=0.):
-#        super().__init__()
-#        dw_channel = c // 2
-#        self.conv1 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=1, bias=True)
-#
-#        self.act = nn.ReLU(inplace=True)
-#
-#
-#    def forward(self, inp):
-#        x1_init, x2_init = torch.chunk(inp, chunks=2, dim=1)
-#        x1 = x1_init
-#        x1 = self.conv1(x1)
-#        x1 = self.act(x1)
-#        y1 = x1_init + x1
-#        y = torch.cat([y1, x2_init], dim=1)
-#        return y
 
 
 class SPAB1(nn.Module):
@@ -564,25 +493,40 @@ class SPAB1(nn.Module):
             out_channels = in_channels
 
         self.in_channels = in_channels
+        # Initial three convolutions
         self.c1_r = Conv3XC(in_channels, mid_channels, gain1=2, s=1)
         self.c2_r = Conv3XC(mid_channels, mid_channels, gain1=2, s=1)
         self.c3_r = Conv3XC(mid_channels, out_channels, gain1=2, s=1)
+
+        # Additional three parallel convolutions
+        self.extra_c1_r = Conv3XC(in_channels, mid_channels, gain1=2, s=1)
+        self.extra_c2_r = Conv3XC(mid_channels, mid_channels, gain1=2, s=1)
+        self.extra_c3_r = Conv3XC(mid_channels, out_channels, gain1=2, s=1)
+
         self.act1 = torch.nn.SiLU(inplace=True)
-        # self.act2 = activation('lrelu', neg_slope=0.1, inplace=True)
 
     def forward(self, x):
+        # Original convolution pathway
         out1 = self.c1_r(x)
         out1_act = self.act1(out1)
-
         out2 = self.c2_r(out1_act)
         out2_act = self.act1(out2)
-
         out3 = self.c3_r(out2_act)
 
-        sim_att = torch.sigmoid(out3) - 0.5
-        out = (out3 + x) * sim_att
+        # Parallel convolution pathway
+        extra_out1 = self.extra_c1_r(x)
+        extra_out1_act = self.act1(extra_out1)
+        extra_out2 = self.extra_c2_r(extra_out1_act)
+        extra_out2_act = self.act1(extra_out2)
+        extra_out3 = self.extra_c3_r(extra_out2_act)
 
-        # return out, out1, sim_att
+        # Combine outputs from both pathways
+        combined_out = out3 + extra_out3
+
+        # Apply attention mechanism
+        sim_att = torch.sigmoid(combined_out) - 0.5
+        out = (combined_out + x) * sim_att
+
         return out, out1, sim_att
 
 
@@ -595,39 +539,47 @@ class SPAB2(nn.Module):
             out_channels = in_channels
 
         self.in_channels = in_channels
+        # Initial three convolutions
         self.c1_r = Conv3XC2(in_channels, mid_channels, gain1=2, s=1, groups=2)
         self.c2_r = Conv3XC2(mid_channels, mid_channels, gain1=2, s=1, groups=2)
         self.c3_r = Conv3XC2(mid_channels, out_channels, gain1=2, s=1, groups=2)
+
+        # Additional three parallel convolutions
+        self.extra_c1_r = Conv3XC2(in_channels, mid_channels, gain1=2, s=1, groups=2)
+        self.extra_c2_r = Conv3XC2(mid_channels, mid_channels, gain1=2, s=1, groups=2)
+        self.extra_c3_r = Conv3XC2(mid_channels, out_channels, gain1=2, s=1, groups=2)
+
         self.act1 = CustomActivation(mid_channels)
         self.act2 = CustomActivation(mid_channels)
         self.act = torch.nn.SiLU(inplace=True)
-        # self.act2 = activation('lrelu', neg_slope=0.1, inplace=True)
-
-        # self.alpha = nn.Parameter(1*torch.ones((1, out_channels, 1, 1)), requires_grad=True)
-        # self.beta = nn.Parameter(1*torch.ones((1, out_channels, 1, 1)), requires_grad=True)
-        # self.gamma = nn.Parameter(0.5*torch.ones((1, out_channels, 1, 1)), requires_grad=True)
 
     def forward(self, x):
+        # Original convolution pathway
         out1 = self.c1_r(x)
         out1_act = self.act1(out1)
-
         out2 = self.c2_r(out1_act)
         out2_act = self.act2(out2)
-
         out3 = self.c3_r(out2_act)
-        out3 = self.act(out3) + x
 
-        # sim_att = torch.sigmoid(self.alpha * out3) - 0.5
-        # sim_att = self.alpha * torch.sigmoid(self.beta*out3) - self.gamma
-        # out = (out3 + x) * sim_att
+        # Parallel convolution pathway
+        extra_out1 = self.extra_c1_r(x)
+        extra_out1_act = self.act1(extra_out1)
+        extra_out2 = self.extra_c2_r(extra_out1_act)
+        extra_out2_act = self.act2(extra_out2)
+        extra_out3 = self.extra_c3_r(extra_out2_act)
 
+        # Combine outputs from both pathways
+        combined_out = out3 + extra_out3
+
+        out3 = self.act(combined_out) + x
         return out3, out1, out3
+
 
 
 # @ARCH_REGISTRY.register()
 class SPAN30(nn.Module):
     """
-    Swift Parameter-free Attention Network for Efficient Super-Resolution with Channel Attention
+    Swift Parameter-free Attention Network for Efficient Super-Resolution
     """
 
     def __init__(
@@ -647,68 +599,41 @@ class SPAN30(nn.Module):
         self.img_range = img_range
         self.mean = torch.Tensor(rgb_mean).view(1, 3, 1, 1)
 
-        # Define the initial convolution layer
         self.conv_1 = Conv3XC(in_channels, feature_channels, gain1=2, s=1)
-        self.ca1 = ChannelAttention(feature_channels)  # Add Channel Attention layer
-
-        # Define the SPAB blocks with CA layers in between
         self.block_1 = SPAB1(feature_channels, bias=bias)
-        self.ca2 = ChannelAttention(feature_channels)
-
         self.block_2 = SPAB1(feature_channels, bias=bias)
-        self.ca3 = ChannelAttention(feature_channels)
-
         self.block_3 = SPAB1(feature_channels, bias=bias)
-        self.ca4 = ChannelAttention(feature_channels)
-
         self.block_4 = SPAB1(feature_channels, bias=bias)
-        self.ca5 = ChannelAttention(feature_channels)
-
         self.block_5 = SPAB1(feature_channels, bias=bias)
-        self.ca6 = ChannelAttention(feature_channels)
-
         self.block_6 = SPAB1(feature_channels, bias=bias)
 
         self.conv_cat = conv_layer(
             feature_channels * 4, feature_channels, kernel_size=1, bias=True
         )
         self.conv_2 = Conv3XC(feature_channels, feature_channels, gain1=2, s=1)
-        self.ca7 = ChannelAttention(feature_channels)  # Another CA layer
 
         self.upsampler = pixelshuffle_block(
             feature_channels, out_channels, upscale_factor=upscale
         )
+        self.cuda()(torch.randn(1, 3, 256, 256).cuda())
 
     def forward(self, x):
+        # x = x.type(torch.HalfTensor).cuda()
         self.mean = self.mean.type_as(x)
-        if x.shape[1] == 1:  # If the input has only one channel (grayscale)
-            x = x.repeat(1, 3, 1, 1)  # Convert grayscale to RGB
-
         x = (x - self.mean) * self.img_range
         out_feature = self.conv_1(x)
-        out_feature = self.ca1(out_feature)  # Apply CA after first conv
 
         out_b1, out_b0_2, att1 = self.block_1(out_feature)
-        out_b1 = self.ca2(out_b1)  # Apply CA after block 1
-
         out_b2, out_b1_2, att2 = self.block_2(out_b1)
-        out_b2 = self.ca3(out_b2)  # Apply CA after block 2
 
         out_b3, out_b2_2, att3 = self.block_3(out_b2)
-        out_b3 = self.ca4(out_b3)  # Apply CA after block 3
-
         out_b4, out_b3_2, att4 = self.block_4(out_b3)
-        out_b4 = self.ca5(out_b4)  # Apply CA after block 4
-
         out_b5, out_b4_2, att5 = self.block_5(out_b4)
-        out_b5 = self.ca6(out_b5)  # Apply CA after block 5
-
         out_b6, out_b5_2, att6 = self.block_6(out_b5)
 
         out_final = self.conv_2(out_b6)
-        out_final = self.ca7(out_final)  # Apply CA after final conv
-
         out = self.conv_cat(torch.cat([out_feature, out_final, out_b1, out_b5_2], 1))
+        # out = self.conv_cat(torch.cat([out_feature, out_b4], 1))
         output = self.upsampler(out)
 
         return output
